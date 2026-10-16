@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.weedwhitesandwine.stormzy",
+  "name": "Stormzy",
+  "version": "0.1.0",
+  "author": "weedwhitesandwine",
+  "license": "MIT",
+  "description": "Live weather radar for the place you choose: the Japan Meteorological Agency's 5-minute nowcast over Japan and RainViewer's worldwide composite everywhere else, on a bundled Natural Earth basemap in your theme.",
+  "kinds": [
+    "panel",
+    "bar-widget"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "panel": "StormzyPanel.qml",
+    "barWidget": "StormzyBar.qml"
+  },
+  "barWidget": {
+    "displayName": "Stormzy",
+    "description": "Bar icon that opens the Stormzy radar window",
+    "category": "Weather",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "showIcon": true
+    },
+    "schema": [
+      {
+        "key": "showIcon",
+        "type": "boolean",
+        "label": "Show the icon in the bar",
+        "defaultValue": true
+      }
+    ]
+  }
+}

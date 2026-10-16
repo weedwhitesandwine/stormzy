@@ -1,0 +1,4 @@
+singleton StormzyState 1.0 StormzyState.qml
+RadarMap 1.0 RadarMap.qml
+StormzyPanel 1.0 StormzyPanel.qml
+StormzyBar 1.0 StormzyBar.qml
