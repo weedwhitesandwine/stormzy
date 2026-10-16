@@ -47,6 +47,9 @@ QtObject {
 
   // ---------------------------------------------------------------- frames
   property var frames: []             // [{id, time, kind}], oldest first
+  // The same list as a model, edited by difference so the timeline's ticks
+  // survive a refresh instead of being rebuilt every minute.
+  property ListModel frameModel: ListModel {}
   property int nativeZoom: 8
   property string framesError: ""
   property real framesFetchedAt: 0
@@ -183,6 +186,7 @@ QtObject {
 
   onEffectiveProviderChanged: {
     root.frames = []
+    root.frameModel.clear()
     root.frameIndex = -1
     root.playing = false
     root.framesError = ""
@@ -217,12 +221,26 @@ QtObject {
     var wasNewest = root.frameIndex < 0 || root.frameIndex === root.newestPastIndex
     var oldId = root.currentFrame ? root.currentFrame.id : ""
     root.frames = clean
+    root.syncFrameModel(clean)
     root.framesProvider = msg.provider
     root.framesFetchedAt = Date.now()
     var newest = root.newestPastIndex
     if (wasNewest && !root.playing) { root.frameIndex = newest >= 0 ? newest : clean.length - 1; return }
     for (var j = 0; j < clean.length; j++) if (clean[j].id === oldId) { root.frameIndex = j; return }
     root.frameIndex = newest >= 0 ? newest : clean.length - 1
+  }
+
+  function syncFrameModel(list) {
+    var want = {}
+    for (var i = 0; i < list.length; i++) want[list[i].id] = true
+    for (var r = root.frameModel.count - 1; r >= 0; r--)
+      if (!want[root.frameModel.get(r).id]) root.frameModel.remove(r)
+    for (var j = 0; j < list.length; j++) {
+      var have = j < root.frameModel.count ? root.frameModel.get(j).id : ""
+      if (have === list[j].id) continue
+      root.frameModel.insert(j, { id: list[j].id, time: list[j].time, kind: list[j].kind })
+    }
+    while (root.frameModel.count > list.length) root.frameModel.remove(root.frameModel.count - 1)
   }
 
   // -------------------------------------------------------------- playback

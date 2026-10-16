@@ -55,6 +55,7 @@ TIMEOUT = 10
 WORKERS = 4
 CACHE_CEILING = 160 * 1024 * 1024
 INDEX_TTL = 25                  # seconds an index answer is reused
+MAX_DATA_FILE = 64 * 1024 * 1024  # a bundled data file, decompressed
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
@@ -435,12 +436,21 @@ def fold(s):
     return s.casefold().strip()
 
 
+def read_data(name):
+    """A bundled data file, decompressed to a ceiling. They ship with the
+    plugin, but the read is bounded like every other one here."""
+    with gzip.open(os.path.join(DATA_DIR, name), "rb") as f:
+        raw = f.read(MAX_DATA_FILE + 1)
+    if len(raw) > MAX_DATA_FILE:
+        raise ValueError("%s is over %d bytes" % (name, MAX_DATA_FILE))
+    return json.loads(raw.decode("utf-8"))
+
+
 def load_cities():
     global _cities, _countries, _country_lookup
     if _cities is not None:
         return
-    with gzip.open(os.path.join(DATA_DIR, "cities.json.gz"), "rb") as f:
-        doc = json.loads(f.read().decode("utf-8"))
+    doc = read_data("cities.json.gz")
     _countries = doc["countries"]
     rows = []
     for name, ascii_name, cc, adm, lat, lon, pop in doc["cities"]:
@@ -515,8 +525,7 @@ def load_tier(tier):
     with _data_lock:
         if tier in _tiers:
             return _tiers[tier]
-        with gzip.open(os.path.join(DATA_DIR, "basemap-%s.json.gz" % tier), "rb") as f:
-            doc = json.loads(f.read().decode("utf-8"))
+        doc = read_data("basemap-%s.json.gz" % tier)
         layers = {}
         for layer, lines in doc.items():
             packed = []
@@ -534,8 +543,7 @@ def load_places():
     global _places
     with _data_lock:
         if _places is None:
-            with gzip.open(os.path.join(DATA_DIR, "places.json.gz"), "rb") as f:
-                _places = json.loads(f.read().decode("utf-8"))
+            _places = read_data("places.json.gz")
         return _places
 
 

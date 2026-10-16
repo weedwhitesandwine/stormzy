@@ -108,8 +108,9 @@ Item {
 
   // ------------------------------------------------------------------ search
 
-  property var results: []
   property int searchReq: -1
+  readonly property int resultCount: resultsModel.count
+  ListModel { id: resultsModel }
 
   Timer {
     id: searchTimer
@@ -117,7 +118,7 @@ Item {
     repeat: false
     onTriggered: {
       var q = searchField.text.trim()
-      if (q.length < 2) { root.results = []; root.searchReq = -1; return }
+      if (q.length < 2) { resultsModel.clear(); root.searchReq = -1; return }
       root.searchReq = StormzyState.search(q)
     }
   }
@@ -125,18 +126,24 @@ Item {
   function onSearch(msg) {
     if (msg.id !== root.searchReq) return
     var list = Array.isArray(msg.results) ? msg.results : []
-    var clean = []
-    for (var i = 0; i < list.length && clean.length < 12; i++) {
+    resultsModel.clear()
+    for (var i = 0; i < list.length && resultsModel.count < 12; i++) {
       var p = StormzyState.cleanPlace(list[i])
-      if (p && p.name) { p.pop = typeof list[i].pop === "number" ? list[i].pop : 0; clean.push(p) }
+      if (!p || !p.name) continue
+      resultsModel.append({ name: p.name, cc: p.cc, country: p.country, admin: p.admin, lat: p.lat, lon: p.lon,
+                            pop: typeof list[i].pop === "number" ? list[i].pop : 0 })
     }
-    root.results = clean
+  }
+
+  function resultAt(i) {
+    var r = resultsModel.get(i)
+    return { name: r.name, cc: r.cc, country: r.country, admin: r.admin, lat: r.lat, lon: r.lon }
   }
 
   function choose(p) {
     StormzyState.choosePlace(p)
     searchField.text = ""
-    root.results = []
+    resultsModel.clear()
     root.closeSettings()
   }
 
@@ -230,7 +237,7 @@ Item {
     color: "transparent"
     WlrLayershell.namespace: "stormzy"
     WlrLayershell.layer: WlrLayer.Top
-    WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
+    WlrLayershell.keyboardFocus: root.stayOnTop ? WlrKeyboardFocus.None : WlrKeyboardFocus.OnDemand
     exclusionMode: ExclusionMode.Ignore
 
     HyprlandFocusGrab {
@@ -260,7 +267,7 @@ Item {
           anchors.left: parent.left
           anchors.verticalCenter: parent.verticalCenter
           spacing: 10
-          Label { text: "󰖗"; font.pixelSize: root.fontTitle + 4; anchors.verticalCenter: parent.verticalCenter }
+          Label { text: "󰐷"; font.pixelSize: root.fontTitle + 4; anchors.verticalCenter: parent.verticalCenter }
           Label { text: "STORMZY"; font.bold: true; font.letterSpacing: 2; font.pixelSize: root.fontTitle; anchors.verticalCenter: parent.verticalCenter }
           Label {
             anchors.verticalCenter: parent.verticalCenter
@@ -432,7 +439,7 @@ Item {
                 Keys.onPressed: function(event) {
                   if (event.key === Qt.Key_Escape) { root.closeSettings(); event.accepted = true; return }
                   if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                    if (root.results.length > 0) root.choose(root.results[0])
+                    if (resultsModel.count > 0) root.choose(root.resultAt(0))
                     event.accepted = true
                   }
                 }
@@ -450,10 +457,13 @@ Item {
               width: parent.width
               spacing: 2
               Repeater {
-                model: root.results
+                model: resultsModel
                 delegate: Rectangle {
-                  required property var modelData
                   required property int index
+                  required property string name
+                  required property string admin
+                  required property string country
+                  required property int pop
                   width: settingsColumn.width
                   height: 34
                   radius: 4
@@ -463,14 +473,14 @@ Item {
                     anchors.leftMargin: 10
                     anchors.right: popLabel.left
                     anchors.verticalCenter: parent.verticalCenter
-                    text: root.placeLine(modelData)
+                    text: name + (admin && admin !== name ? ", " + admin : "") + (country ? ", " + country : "")
                   }
                   Label {
                     id: popLabel
                     anchors.right: parent.right
                     anchors.rightMargin: 10
                     anchors.verticalCenter: parent.verticalCenter
-                    text: modelData.pop >= 1000000 ? (modelData.pop / 1000000).toFixed(1) + " M" : (modelData.pop >= 1000 ? Math.round(modelData.pop / 1000) + " k" : "")
+                    text: pop >= 1000000 ? (pop / 1000000).toFixed(1) + " M" : (pop >= 1000 ? Math.round(pop / 1000) + " k" : "")
                     opacity: 0.55
                     font.pixelSize: root.fontSmall
                   }
@@ -479,7 +489,7 @@ Item {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: root.choose(modelData)
+                    onClicked: root.choose(root.resultAt(index))
                   }
                 }
               }
@@ -581,22 +591,23 @@ Item {
           anchors.rightMargin: 12
           anchors.verticalCenter: transport.verticalCenter
           height: 24
-          readonly property int count: StormzyState.frames.length
+          readonly property int count: StormzyState.frameModel.count
           readonly property real slot: count > 0 ? Math.min(18, width / count) : 0
+          readonly property color tickColor: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.45)
+          readonly property color tickBorder: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.5)
           Repeater {
-            model: StormzyState.frames
+            model: StormzyState.frameModel
             delegate: Rectangle {
-              required property var modelData
+              required property string kind
               required property int index
               x: index * timeline.slot
               width: Math.max(2, timeline.slot - 2)
-              height: index === StormzyState.frameIndex ? 22 : (modelData.kind === "forecast" ? 10 : 14)
+              height: index === StormzyState.frameIndex ? 22 : (kind === "forecast" ? 10 : 14)
               anchors.verticalCenter: parent.verticalCenter
               radius: 2
-              color: index === StormzyState.frameIndex ? root.accent
-                : (modelData.kind === "forecast" ? "transparent" : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.45))
-              border.width: modelData.kind === "forecast" ? 1 : 0
-              border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.5)
+              color: index === StormzyState.frameIndex ? root.accent : (kind === "forecast" ? "transparent" : timeline.tickColor)
+              border.width: kind === "forecast" ? 1 : 0
+              border.color: timeline.tickBorder
               MouseArea { anchors.fill: parent; anchors.margins: -1; cursorShape: Qt.PointingHandCursor; onClicked: StormzyState.selectFrame(index) }
             }
           }

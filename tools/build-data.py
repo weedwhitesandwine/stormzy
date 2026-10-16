@@ -42,6 +42,17 @@ def open_any(directory, name):
     raise SystemExit("missing input: %s (or .gz) in %s" % (name, directory))
 
 
+MAX_INPUT = 512 * 1024 * 1024
+
+
+def load_json(directory, name):
+    with open_any(directory, name) as fh:
+        raw = fh.read(MAX_INPUT + 1)
+    if len(raw) > MAX_INPUT:
+        raise SystemExit("input over %d bytes: %s" % (MAX_INPUT, name))
+    return json.loads(raw)
+
+
 def write_gz(path, obj):
     raw = json.dumps(obj, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     with gzip.open(path, "wb", compresslevel=9) as f:
@@ -102,7 +113,7 @@ def lines_of(geom):
 
 
 def collect(directory, name, tol, min_points=2):
-    src = json.load(open_any(directory, name))
+    src = load_json(directory, name)
     out = []
     total_in = 0
     for feat in src.get("features", []):
@@ -139,7 +150,7 @@ def build_basemap(src, out_dir):
 
 
 def build_places(src, out_dir):
-    feats = json.load(open_any(src, "places.geojson")).get("features", [])
+    feats = load_json(src, "places.geojson").get("features", [])
     rows = []
     for f in feats:
         p = f.get("properties") or {}

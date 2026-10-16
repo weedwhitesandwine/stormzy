@@ -19,7 +19,9 @@ Ui.BarWidget {
     if (StormzyState.place) parts.push(StormzyState.place.name + (StormzyState.place.country ? ", " + StormzyState.place.country : ""))
     else parts.push("choose a place")
     parts.push(StormzyState.ageText())
-    return parts.join(" · ")
+    // Omarchy renders tooltips as AutoText, so markup is stripped from a
+    // place name that came off disk.
+    return parts.join(" · ").replace(/[<>]/g, "")
   }
 
   implicitWidth: showIcon ? button.implicitWidth : 0
@@ -30,9 +32,9 @@ Ui.BarWidget {
     visible: root.showIcon
     anchors.fill: parent
     bar: root.bar
-    // Material Design "weather pouring" from the Nerd Font: a glyph takes
+    // Material Design "radar" from the Nerd Font: a glyph takes
     // the theme's bar foreground like every other icon up there.
-    text: "󰖗"
+    text: "󰐷"
     tooltipText: root.tooltip
     active: StormzyState.framesError !== "" && !!StormzyState.place
     fixedWidth: root.bar && root.bar.vertical ? -1 : Style.space(27)
