@@ -5,9 +5,9 @@ import QtQuick
 import qs.Commons
 import "."
 
-// The radar window. One surface for everything: the map, the timeline, and a
-// settings view where the place and the radar source are chosen.
-// Toggled by the bar icon or by `omarchy-shell shell toggle <id>`.
+// The radar window. One surface for everything: the map, the layer row and
+// timeline, and a settings view where the place and the radar source are
+// chosen. Toggled by the bar icon or by `omarchy-shell shell toggle <id>`.
 Item {
   id: root
 
@@ -155,13 +155,46 @@ Item {
     return parts.join(", ")
   }
 
-  // ----------------------------------------------------------------- legend
+  // ----------------------------------------------------------------- legends
 
   readonly property var jmaLegend: [
     ["0–1", "#f2f2ff"], ["1–5", "#a0d2ff"], ["5–10", "#218cff"], ["10–20", "#0041ff"],
     ["20–30", "#faf500"], ["30–50", "#ff9900"], ["50–80", "#ff2800"], ["80+", "#b40068"]
   ]
+  readonly property var tempLegend: [
+    ["<-20", "#776fa4"], ["-20", "#4d4471"], ["-15", "#002080"], ["-10", "#0041ff"], ["-5", "#0096ff"], ["0", "#b9ebff"],
+    ["5", "#fffff0"], ["10", "#ffff96"], ["15", "#faf500"], ["20", "#ff9900"], ["25", "#ff2800"], ["30", "#b40068"], ["35+", "#50002e"]
+  ]
+  readonly property var aqiLegend: [
+    ["0–50 good", "#00e400"], ["51–100 moderate", "#ffff00"], ["101–150 sensitive", "#ff7e00"],
+    ["151–200 unhealthy", "#ff0000"], ["201–300 very unhealthy", "#8f3f97"], ["301+ hazardous", "#7e0023"]
+  ]
   readonly property var schemes: [[2, "Universal blue"], [4, "Weather Channel"], [6, "NEXRAD"], [8, "Dark Sky"]]
+
+  readonly property string legendKind: {
+    var s = StormzyState.source, d = StormzyState.dataMode
+    if (s === "jma") return "rain-jma"
+    if (s === "rainviewer") return "rain-rv"
+    if (s === "jma_temp" || (d === "grid-weather" && StormzyState.layer === "temp")) return "temp"
+    if (StormzyState.layer === "wind") return "wind"
+    if (s === "waqi" || d === "grid-air") return "air"
+    if (s === "himawari") return "clouds"
+    return ""
+  }
+
+  readonly property string attribution: {
+    switch (StormzyState.source || StormzyState.dataMode) {
+    case "jma": case "jma_temp": return "Radar © Japan Meteorological Agency"
+    case "rainviewer": return "Radar © RainViewer"
+    case "himawari": return "Imagery © Japan Meteorological Agency (Himawari)"
+    case "waqi": return "Air quality © World Air Quality Index project"
+    case "stations": return "Observations © Japan Meteorological Agency (AMeDAS)"
+    case "grid-weather": case "grid-air": return "Data © Open-Meteo"
+    }
+    return ""
+  }
+
+  readonly property string hints: "r t w a c layers  ·  space play  ·  [ ] step  ·  drag or scroll  ·  hjkl pan  ·  + − zoom  ·  0 my place  ·  s search  ·  f forecast  ·  esc close"
 
   // ------------------------------------------------------------------ window
 
@@ -229,11 +262,27 @@ Item {
     }
   }
 
+  component Swatches: Row {
+    property var bands: []
+    property string unit: ""
+    spacing: 6
+    Label { visible: unit !== ""; text: unit; opacity: 0.7; font.pixelSize: root.fontSmall; anchors.verticalCenter: parent.verticalCenter }
+    Repeater {
+      model: bands
+      delegate: Row {
+        required property var modelData
+        spacing: 3
+        Rectangle { width: 14; height: 14; radius: 2; color: modelData[1]; anchors.verticalCenter: parent.verticalCenter }
+        Label { text: modelData[0]; font.pixelSize: root.fontSmall; opacity: 0.85; anchors.verticalCenter: parent.verticalCenter }
+      }
+    }
+  }
+
   PanelWindow {
     id: panel
     visible: root.opened
     implicitWidth: Math.min(1160, Math.round((panel.screen ? panel.screen.width : 1600) * 0.76))
-    implicitHeight: Math.min(820, Math.round((panel.screen ? panel.screen.height : 900) * 0.84))
+    implicitHeight: Math.min(840, Math.round((panel.screen ? panel.screen.height : 900) * 0.86))
     color: "transparent"
     WlrLayershell.namespace: "stormzy"
     WlrLayershell.layer: WlrLayer.Top
@@ -273,18 +322,18 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             text: StormzyState.place ? root.placeLine(StormzyState.place) : "no place chosen"
             opacity: 0.85
-            width: Math.min(implicitWidth, header.width - 420)
+            width: Math.min(implicitWidth, header.width - 460)
           }
           Rectangle {
             anchors.verticalCenter: parent.verticalCenter
-            visible: !!StormzyState.place
+            visible: !!StormzyState.place && StormzyState.sourceLabel !== ""
             implicitWidth: badge.implicitWidth + 14
             implicitHeight: badge.implicitHeight + 6
             radius: 4
             color: Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.2)
             border.width: 1
             border.color: root.accent
-            Label { id: badge; anchors.centerIn: parent; text: StormzyState.providerLabel; font.pixelSize: root.fontSmall; font.bold: true; color: root.accent }
+            Label { id: badge; anchors.centerIn: parent; text: StormzyState.sourceLabel; font.pixelSize: root.fontSmall; font.bold: true; color: root.accent }
           }
         }
 
@@ -295,8 +344,8 @@ Item {
           Label {
             anchors.verticalCenter: parent.verticalCenter
             text: StormzyState.ageText()
-            color: StormzyState.framesError ? root.urgent : root.foreground
-            opacity: StormzyState.framesError ? 1 : 0.75
+            color: (StormzyState.framesError || StormzyState.dataError) ? root.urgent : root.foreground
+            opacity: (StormzyState.framesError || StormzyState.dataError) ? 1 : 0.75
             font.pixelSize: root.fontSmall
           }
           Item { width: 8; height: 1 }
@@ -331,10 +380,13 @@ Item {
             anchors.fill: parent
             anchors.margins: 1
             visible: !root.settingsOpen
-            provider: StormzyState.effectiveProvider
+            source: StormzyState.source
             frameId: StormzyState.currentFrame ? StormzyState.currentFrame.id : ""
             nativeZoom: StormzyState.nativeZoom
             scheme: StormzyState.scheme
+            tileOpacity: StormzyState.tileOpacity
+            dataMode: StormzyState.dataMode
+            dataField: StormzyState.layer === "temp" ? "temp" : (StormzyState.layer === "wind" ? "wind" : (StormzyState.layer === "air" ? "air" : ""))
             foreground: root.foreground
             background: root.background
             accent: root.accent
@@ -343,6 +395,7 @@ Item {
             fontSize: root.fontSmall
             marker: StormzyState.place
             onUserMoved: StormzyState.zoom = map.zoom
+            onDataArrived: function(stamp, error) { StormzyState.dataTime = stamp; StormzyState.dataError = error }
           }
 
           // Keyboard driving of the map.
@@ -368,6 +421,11 @@ Item {
               case Qt.Key_0: root.goHome(); break
               case Qt.Key_S: case Qt.Key_Slash: root.openSettings(); break
               case Qt.Key_F: StormzyState.showForecast = !StormzyState.showForecast; break
+              case Qt.Key_R: StormzyState.setLayer("rain"); break
+              case Qt.Key_T: StormzyState.setLayer("temp"); break
+              case Qt.Key_W: StormzyState.setLayer("wind"); break
+              case Qt.Key_A: StormzyState.setLayer("air"); break
+              case Qt.Key_C: StormzyState.setLayer("clouds"); break
               default: event.accepted = false; return
               }
               event.accepted = true
@@ -383,8 +441,19 @@ Item {
 
           Label {
             anchors.centerIn: parent
-            visible: !root.settingsOpen && !!StormzyState.place && !StormzyState.haveFrames
-            text: StormzyState.framesError ? "Radar unreachable: " + StormzyState.framesError : "Loading radar…"
+            width: parent.width - 80
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.Wrap
+            visible: !root.settingsOpen && !!StormzyState.place && StormzyState.unavailable !== ""
+            text: StormzyState.unavailable
+            opacity: 0.8
+          }
+
+          Label {
+            anchors.centerIn: parent
+            visible: !root.settingsOpen && !!StormzyState.place && StormzyState.unavailable === ""
+              && StormzyState.source !== "" && !StormzyState.haveFrames
+            text: StormzyState.framesError ? "Unreachable: " + StormzyState.framesError : "Loading…"
             color: StormzyState.framesError ? root.urgent : root.foreground
           }
         }
@@ -510,7 +579,7 @@ Item {
               }
             }
 
-            Label { text: "RADAR SOURCE"; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: root.fontSmall; opacity: 0.7 }
+            Label { text: "RAIN SOURCE"; font.bold: true; font.letterSpacing: 1.5; font.pixelSize: root.fontSmall; opacity: 0.7 }
             Flow {
               width: parent.width
               spacing: 8
@@ -521,7 +590,7 @@ Item {
             Label {
               width: parent.width
               wrapMode: Text.Wrap
-              text: "Auto uses the Japan Meteorological Agency for a place in Japan and RainViewer's composite of national radars everywhere else."
+              text: "Auto uses the Japan Meteorological Agency for a place in Japan and RainViewer's composite of national radars everywhere else. Temperature and wind come from JMA tiles and AMeDAS stations in Japan and from Open-Meteo points elsewhere; air quality from the World Air Quality Index tiles; cloud imagery from Himawari over Japan and the Asia-Pacific."
               opacity: 0.75
               font.pixelSize: root.fontSmall
             }
@@ -545,7 +614,7 @@ Item {
             Flow {
               width: parent.width
               spacing: 8
-              Chip { label: (StormzyState.showForecast ? "✓ " : "") + "Show forecast frames (JMA)"; on: StormzyState.showForecast; onClicked: { StormzyState.showForecast = !StormzyState.showForecast } }
+              Chip { label: (StormzyState.showForecast ? "✓ " : "") + "Show forecast frames (JMA rain and temperature)"; on: StormzyState.showForecast; onClicked: StormzyState.showForecast = !StormzyState.showForecast }
               Chip { label: (StormzyState.pollWhenClosed ? "✓ " : "") + "Refresh the frame list while closed (every 10 min)"; on: StormzyState.pollWhenClosed; onClicked: StormzyState.pollWhenClosed = !StormzyState.pollWhenClosed }
             }
 
@@ -553,7 +622,7 @@ Item {
             Label {
               width: parent.width
               wrapMode: Text.Wrap
-              text: "Radar: Japan Meteorological Agency (JMA) and RainViewer. Basemap: Natural Earth, bundled. Places: GeoNames, bundled. Tiles are cached under ~/.cache/stormzy."
+              text: "Radar: Japan Meteorological Agency and RainViewer. Temperature, wind, air quality and cloud imagery: JMA, AMeDAS, Open-Meteo, the World Air Quality Index project and Himawari. Basemap: Natural Earth, bundled. Places: GeoNames, bundled. Tiles are cached under ~/.cache/stormzy."
               opacity: 0.75
               font.pixelSize: root.fontSmall
             }
@@ -570,14 +639,32 @@ Item {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         anchors.margins: root.pad
-        height: 92
+        height: 132
 
-        // Transport and timeline.
+        // Layer row, transport and timeline.
         Row {
-          id: transport
+          id: layerRow
           anchors.top: parent.top
           anchors.left: parent.left
+          spacing: 6
+          Repeater {
+            model: StormzyState.layers
+            delegate: Chip {
+              required property string modelData
+              label: StormzyState.layerNames[modelData]
+              on: StormzyState.layer === modelData
+              onClicked: StormzyState.setLayer(modelData)
+            }
+          }
+        }
+
+        Row {
+          id: transport
+          anchors.left: layerRow.right
+          anchors.leftMargin: 14
+          anchors.verticalCenter: layerRow.verticalCenter
           spacing: 2
+          visible: StormzyState.haveFrames
           IconButton { glyph: "󰒮"; onClicked: StormzyState.jumpOldest() }
           IconButton { glyph: StormzyState.playing ? "󰏤" : "󰐊"; on: StormzyState.playing; onClicked: StormzyState.togglePlay() }
           IconButton { glyph: "󰒭"; onClicked: StormzyState.jumpNewest() }
@@ -589,8 +676,9 @@ Item {
           anchors.leftMargin: 10
           anchors.right: stamp.left
           anchors.rightMargin: 12
-          anchors.verticalCenter: transport.verticalCenter
+          anchors.verticalCenter: layerRow.verticalCenter
           height: 24
+          visible: StormzyState.haveFrames
           readonly property int count: StormzyState.frameModel.count
           readonly property real slot: count > 0 ? Math.min(18, width / count) : 0
           readonly property color tickColor: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.45)
@@ -616,44 +704,47 @@ Item {
         Label {
           id: stamp
           anchors.right: parent.right
-          anchors.verticalCenter: transport.verticalCenter
+          anchors.verticalCenter: layerRow.verticalCenter
           text: StormzyState.stampText(StormzyState.currentFrame)
           font.bold: true
         }
 
         // Legend and attribution.
-        Row {
-          id: legend
+        Item {
+          id: legendRow
           anchors.left: parent.left
-          anchors.top: transport.bottom
-          anchors.topMargin: 8
-          spacing: 6
-          visible: StormzyState.effectiveProvider === "jma"
-          Label { text: "mm/h"; opacity: 0.7; font.pixelSize: root.fontSmall; anchors.verticalCenter: parent.verticalCenter }
-          Repeater {
-            model: root.jmaLegend
-            delegate: Row {
-              required property var modelData
-              spacing: 3
-              Rectangle { width: 14; height: 14; radius: 2; color: modelData[1]; anchors.verticalCenter: parent.verticalCenter }
-              Label { text: modelData[0]; font.pixelSize: root.fontSmall; opacity: 0.85; anchors.verticalCenter: parent.verticalCenter }
-            }
+          anchors.right: parent.right
+          anchors.top: layerRow.bottom
+          anchors.topMargin: 10
+          height: 20
+          Swatches { visible: root.legendKind === "rain-jma"; bands: root.jmaLegend; unit: "mm/h"; anchors.verticalCenter: parent.verticalCenter }
+          Swatches { visible: root.legendKind === "temp"; bands: root.tempLegend; unit: "°C"; anchors.verticalCenter: parent.verticalCenter }
+          Swatches { visible: root.legendKind === "air"; bands: root.aqiLegend; unit: "AQI (US)"; anchors.verticalCenter: parent.verticalCenter }
+          Label {
+            visible: root.legendKind === "rain-rv"
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Colour is radar reflectivity: blue light, yellow and red heavy."
+            opacity: 0.7; font.pixelSize: root.fontSmall
+          }
+          Label {
+            visible: root.legendKind === "wind"
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Arrows point downwind; the number is metres per second. Orange arrows are 10 m/s and over, red 17 and over."
+            opacity: 0.7; font.pixelSize: root.fontSmall
+          }
+          Label {
+            visible: root.legendKind === "clouds"
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Infrared: the brighter the cloud, the colder and higher its top."
+            opacity: 0.7; font.pixelSize: root.fontSmall
           }
         }
-        Label {
-          anchors.left: parent.left
-          anchors.top: transport.bottom
-          anchors.topMargin: 8
-          visible: StormzyState.effectiveProvider !== "jma"
-          text: "Colour is radar reflectivity: blue light, yellow and red heavy."
-          opacity: 0.7
-          font.pixelSize: root.fontSmall
-        }
+
         Label {
           anchors.right: parent.right
-          anchors.top: transport.bottom
-          anchors.topMargin: 8
-          text: (StormzyState.effectiveProvider === "jma" ? "Radar © Japan Meteorological Agency" : "Radar © RainViewer") + "  ·  Map: Natural Earth"
+          anchors.top: legendRow.bottom
+          anchors.topMargin: 6
+          text: root.attribution + (root.attribution ? "  ·  " : "") + "Map: Natural Earth"
           opacity: 0.55
           font.pixelSize: root.fontSmall
         }
@@ -662,7 +753,7 @@ Item {
           anchors.left: parent.left
           anchors.right: parent.right
           anchors.bottom: parent.bottom
-          text: "space play  ·  [ ] step  ·  home/end  ·  drag or scroll  ·  hjkl pan  ·  + − zoom  ·  0 my place  ·  s search  ·  f forecast  ·  esc close"
+          text: root.hints
           opacity: 0.45
           font.pixelSize: root.fontSmall
         }

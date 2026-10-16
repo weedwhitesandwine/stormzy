@@ -27,23 +27,75 @@ QtObject {
   // The place is chosen by the user and nothing else: no IP lookup, no GPS.
   property var place: null            // {name, cc, country, admin, lat, lon}
   property real zoom: 7
-  property string provider: "auto"    // auto | jma | rainviewer
+  property string layer: "rain"       // rain | temp | wind | air | clouds
+  property string provider: "auto"    // rain source: auto | jma | rainviewer
   property int scheme: 2              // RainViewer colour scheme (0-8)
   property bool showForecast: true
   property bool pollWhenClosed: true
   property var recents: []
   property bool settingsLoaded: false
 
-  readonly property var providerNames: ({ jma: "JMA", rainviewer: "RainViewer" })
+  readonly property var layers: ["rain", "temp", "wind", "air", "clouds"]
+  readonly property var layerNames: ({ rain: "Rain", temp: "Temp", wind: "Wind", air: "Air", clouds: "Clouds" })
 
-  // Auto picks the Japan Meteorological Agency for a place in Japan and the
-  // global RainViewer composite everywhere else.
-  readonly property string effectiveProvider: {
+  // ---------------------------------------------------------- what to show
+  //
+  // Each layer resolves to a tile source, a point-data mode, or neither.
+  // Japan gets JMA's tiles and stations; elsewhere Open-Meteo points stand
+  // in for the layers no one publishes keyless tiles for.
+  readonly property bool inJapan: !!root.place && root.place.cc === "JP"
+  // Himawari's full disc, roughly 60E to 140W.
+  readonly property bool inHimawari: !!root.place && Math.abs(root.place.lat) <= 70
+    && (root.place.lon >= 60 || root.place.lon <= -140)
+  property bool waqiFailed: false
+
+  readonly property string rainSource: {
     if (root.provider === "jma" || root.provider === "rainviewer") return root.provider
-    if (root.place && root.place.cc === "JP") return "jma"
-    return "rainviewer"
+    return root.inJapan ? "jma" : "rainviewer"
   }
-  readonly property string providerLabel: root.providerNames[root.effectiveProvider] || ""
+
+  // The tile source for the current layer, or "" when it has none.
+  readonly property string source: {
+    switch (root.layer) {
+    case "rain": return root.rainSource
+    case "temp": return root.inJapan ? "jma_temp" : ""
+    case "air": return root.waqiFailed ? "" : "waqi"
+    case "clouds": return root.inHimawari ? "himawari" : ""
+    }
+    return ""
+  }
+
+  // What the map draws as points: grid-weather, grid-air, stations, or "".
+  readonly property string dataMode: {
+    switch (root.layer) {
+    case "temp": return root.inJapan ? "" : "grid-weather"
+    case "wind": return root.inJapan ? "stations" : "grid-weather"
+    case "air": return root.waqiFailed ? "grid-air" : ""
+    }
+    return ""
+  }
+
+  readonly property string unavailable: {
+    if (root.layer === "clouds" && !root.inHimawari)
+      return "Cloud imagery is published for Japan and the Asia-Pacific disc only."
+    return ""
+  }
+
+  readonly property var sourceNames: ({
+    jma: "JMA", rainviewer: "RainViewer", jma_temp: "JMA", himawari: "Himawari", waqi: "WAQI",
+    "grid-weather": "Open-Meteo", "grid-air": "Open-Meteo", stations: "AMeDAS"
+  })
+  readonly property string sourceLabel: root.source ? (root.sourceNames[root.source] || "")
+    : (root.sourceNames[root.dataMode] || "")
+
+  readonly property real tileOpacity: {
+    switch (root.source) {
+    case "himawari": return 0.7
+    case "jma_temp": return 0.6
+    case "waqi": return 1.0
+    }
+    return 0.9
+  }
 
   // ---------------------------------------------------------------- frames
   property var frames: []             // [{id, time, kind}], oldest first
@@ -53,9 +105,12 @@ QtObject {
   property int nativeZoom: 8
   property string framesError: ""
   property real framesFetchedAt: 0
-  property string framesProvider: ""
   property int frameIndex: -1
   property bool playing: false
+  // When the layer is points rather than tiles, the map reports the data's
+  // own time stamp here.
+  property string dataTime: ""
+  property string dataError: ""
 
   readonly property var currentFrame: (root.frameIndex >= 0 && root.frameIndex < root.frames.length)
     ? root.frames[root.frameIndex] : null
@@ -81,6 +136,8 @@ QtObject {
   signal tileReady(var msg)
   signal basemapReady(var msg)
   signal searchReady(var msg)
+  signal gridReady(var msg)
+  signal stationsReady(var msg)
 
   // ------------------------------------------------------------- the helper
 
@@ -144,18 +201,12 @@ QtObject {
       root.restartDelay = 1000
       root.refreshFrames()
       break
-    case "frames":
-      root.applyFrames(msg)
-      break
-    case "tile":
-      root.tileReady(msg)
-      break
-    case "basemap":
-      root.basemapReady(msg)
-      break
-    case "search":
-      root.searchReady(msg)
-      break
+    case "frames": root.applyFrames(msg); break
+    case "tile": root.tileReady(msg); break
+    case "basemap": root.basemapReady(msg); break
+    case "search": root.searchReady(msg); break
+    case "grid": root.gridReady(msg); break
+    case "stations": root.stationsReady(msg); break
     }
   }
 
@@ -179,24 +230,28 @@ QtObject {
 
   function refreshFrames() {
     if (!root.helperReady) return
-    root.request({ op: "frames", provider: root.effectiveProvider })
+    if (root.source) root.request({ op: "frames", source: root.source })
     root.refreshCount += 1
     if (root.refreshCount % 10 === 1) root.request({ op: "cleanup" })
   }
 
-  onEffectiveProviderChanged: {
+  function resetFrames() {
     root.frames = []
     root.frameModel.clear()
     root.frameIndex = -1
     root.playing = false
     root.framesError = ""
-    root.refreshFrames()
+    root.dataTime = ""
+    root.dataError = ""
   }
 
+  onSourceChanged: { root.resetFrames(); root.refreshFrames() }
+  onDataModeChanged: { root.dataTime = ""; root.dataError = "" }
+  onLayerChanged: { root.waqiFailed = false; root.scheduleSettingsSave() }
   onShowForecastChanged: { root.scheduleSettingsSave(); root.refreshFrames() }
 
   function applyFrames(msg) {
-    if (msg.provider !== root.effectiveProvider) return
+    if (msg.source !== root.source) return
     var list = Array.isArray(msg.frames) ? msg.frames.slice(0, root.maxFrames) : []
     var clean = []
     for (var i = 0; i < list.length; i++) {
@@ -214,6 +269,9 @@ QtObject {
     if (clean.length === 0) {
       // Keep what we had on a failed refresh; the age readout says it is old.
       root.framesFetchedAt = root.framesFetchedAt || Date.now()
+      // The air-quality tiles have no index to fail gracefully; a refused
+      // probe hands the layer to Open-Meteo's points instead.
+      if (msg.source === "waqi" && root.framesError) root.waqiFailed = true
       return
     }
     // Keep the user's position: by frame id if it still exists, and "newest
@@ -222,7 +280,6 @@ QtObject {
     var oldId = root.currentFrame ? root.currentFrame.id : ""
     root.frames = clean
     root.syncFrameModel(clean)
-    root.framesProvider = msg.provider
     root.framesFetchedAt = Date.now()
     var newest = root.newestPastIndex
     if (wasNewest && !root.playing) { root.frameIndex = newest >= 0 ? newest : clean.length - 1; return }
@@ -283,19 +340,16 @@ QtObject {
     root.frameIndex = i
   }
 
+  function setLayer(name) {
+    if (root.layers.indexOf(name) < 0 || name === root.layer) return
+    root.layer = name
+  }
+
   // ---------------------------------------------------------------- places
 
   function choosePlace(p) {
-    if (!p || typeof p !== "object") return
-    if (typeof p.lat !== "number" || typeof p.lon !== "number") return
-    if (Math.abs(p.lat) > 85 || Math.abs(p.lon) > 180) return
-    var clean = {
-      name: String(p.name || "").slice(0, 80),
-      cc: String(p.cc || "").slice(0, 2).toUpperCase(),
-      country: String(p.country || "").slice(0, 60),
-      admin: String(p.admin || "").slice(0, 60),
-      lat: p.lat, lon: p.lon
-    }
+    var clean = root.cleanPlace(p)
+    if (!clean) return
     root.place = clean
     var next = [clean]
     for (var i = 0; i < root.recents.length && next.length < root.maxRecents; i++) {
@@ -304,6 +358,7 @@ QtObject {
       next.push(r)
     }
     root.recents = next
+    root.waqiFailed = false
     root.scheduleSettingsSave()
   }
 
@@ -313,9 +368,9 @@ QtObject {
     return id
   }
 
-  function requestTiles(provider, frame, z, tiles) {
+  function requestTiles(source, frame, z, tiles) {
     var id = root.nextReq++
-    root.request({ op: "tiles", req: id, provider: provider, frame: frame, z: z,
+    root.request({ op: "tiles", req: id, source: source, frame: frame, z: z,
                    scheme: root.scheme, tiles: tiles })
     return id
   }
@@ -326,23 +381,40 @@ QtObject {
     return id
   }
 
+  function requestGrid(kind, lats, lons) {
+    var id = root.nextReq++
+    root.request({ op: "grid", req: id, kind: kind, lats: lats, lons: lons })
+    return id
+  }
+
+  function requestStations(bbox) {
+    var id = root.nextReq++
+    root.request({ op: "stations", req: id, bbox: bbox })
+    return id
+  }
+
   // ----------------------------------------------------------------- text
 
   function stampText(frame) {
-    if (!frame) return ""
+    if (!frame) return root.dataTime ? root.dataTime : ""
     var d = new Date(frame.time * 1000)
     var text = Qt.formatDateTime(d, "ddd d MMM HH:mm")
     if (frame.kind === "forecast") {
       var ahead = Math.round((frame.time * 1000 - root.now) / 60000)
-      return text + "  ·  forecast " + (ahead >= 0 ? "+" + ahead + " min" : "")
+      var label = ahead >= 90 ? "+" + Math.round(ahead / 60) + " h" : "+" + ahead + " min"
+      return text + "  ·  forecast " + (ahead >= 0 ? label : "")
     }
     return text
   }
 
   function ageText() {
-    if (!root.newestPastTime) return root.framesError ? "radar unreachable (" + root.framesError + ")" : "fetching…"
+    if (!root.source) {
+      if (root.dataError) return "data unreachable (" + root.dataError + ")"
+      return root.dataTime ? "observed " + root.dataTime : (root.unavailable ? "" : "fetching…")
+    }
+    if (!root.newestPastTime) return root.framesError ? "unreachable (" + root.framesError + ")" : "fetching…"
     var mins = Math.round((root.now - root.newestPastTime * 1000) / 60000)
-    var age = mins < 1 ? "just now" : mins + " min ago"
+    var age = mins < 1 ? "just now" : (mins >= 120 ? Math.round(mins / 60) + " h ago" : mins + " min ago")
     if (root.framesError) return "newest " + age + " · refresh failed: " + root.framesError
     return "newest " + age
   }
@@ -413,6 +485,7 @@ QtObject {
       var place = root.cleanPlace(parsed.place)
       if (place) root.place = place
       if (typeof parsed.zoom === "number" && isFinite(parsed.zoom)) root.zoom = Math.max(3, Math.min(11, parsed.zoom))
+      if (root.layers.indexOf(parsed.layer) >= 0) root.layer = parsed.layer
       if (["auto", "jma", "rainviewer"].indexOf(parsed.provider) >= 0) root.provider = parsed.provider
       if (typeof parsed.scheme === "number" && parsed.scheme >= 0 && parsed.scheme <= 8) root.scheme = Math.round(parsed.scheme)
       if (typeof parsed.showForecast === "boolean") root.showForecast = parsed.showForecast
@@ -446,6 +519,7 @@ QtObject {
     root.settingsFile.setText(JSON.stringify({
       place: root.place,
       zoom: Math.round(root.zoom * 100) / 100,
+      layer: root.layer,
       provider: root.provider,
       scheme: root.scheme,
       showForecast: root.showForecast,
