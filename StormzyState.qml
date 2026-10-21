@@ -465,8 +465,15 @@ QtObject {
     }
   }
 
+  // Qt 6.12 hands an array across a `var` signal or property as a sequence
+  // wrapper: it indexes and slices like an array, but Array.isArray rejects
+  // it. Everything the *Ready signals carry has crossed that boundary.
+  function isList(v) {
+    return Array.isArray(v) || (v !== null && typeof v === "object" && typeof v.length === "number")
+  }
+
   function cleanPlace(p) {
-    if (!p || typeof p !== "object" || Array.isArray(p)) return null
+    if (!p || typeof p !== "object" || root.isList(p)) return null
     if (typeof p.lat !== "number" || typeof p.lon !== "number" || !isFinite(p.lat) || !isFinite(p.lon)) return null
     if (Math.abs(p.lat) > 85 || Math.abs(p.lon) > 180) return null
     return {

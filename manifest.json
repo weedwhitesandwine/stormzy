@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.weedwhitesandwine.stormzy",
   "name": "Stormzy",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": "weedwhitesandwine",
   "license": "MIT",
   "description": "Live weather radar for the place you choose: the Japan Meteorological Agency's 5-minute nowcast over Japan and RainViewer's worldwide composite everywhere else, on a bundled Natural Earth basemap in your theme.",

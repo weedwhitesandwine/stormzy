@@ -125,7 +125,7 @@ Item {
 
   function onSearch(msg) {
     if (msg.id !== root.searchReq) return
-    var list = Array.isArray(msg.results) ? msg.results : []
+    var list = StormzyState.isList(msg.results) ? msg.results : []
     resultsModel.clear()
     for (var i = 0; i < list.length && resultsModel.count < 12; i++) {
       var p = StormzyState.cleanPlace(list[i])

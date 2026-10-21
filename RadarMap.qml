@@ -354,7 +354,7 @@ Item {
   function onPoints(msg, kind) {
     if (msg.req !== map.pointsReq) return
     var error = typeof msg.error === "string" ? msg.error.slice(0, 80) : ""
-    var raw = Array.isArray(msg.points) ? msg.points : []
+    var raw = StormzyState.isList(msg.points) ? msg.points : []
     var clean = []
     for (var i = 0; i < raw.length && clean.length < 400; i++) {
       var p = raw[i]
@@ -733,11 +733,11 @@ Item {
     var raw = (msg.lines && typeof msg.lines === "object") ? msg.lines : {}
     var layers = ["lake", "state", "border", "coast"]
     for (var l = 0; l < layers.length; l++) {
-      var src = Array.isArray(raw[layers[l]]) ? raw[layers[l]] : []
+      var src = StormzyState.isList(raw[layers[l]]) ? raw[layers[l]] : []
       var out = []
       for (var i = 0; i < src.length; i++) {
         var flat = src[i]
-        if (!Array.isArray(flat) || flat.length < 4) continue
+        if (!StormzyState.isList(flat) || flat.length < 4) continue
         var n = flat.length >> 1
         var u = new Float32Array(n), v = new Float32Array(n)
         var u0 = 2, v0 = 2, u1 = -1, v1 = -1
@@ -754,10 +754,10 @@ Item {
       lines[layers[l]] = out
     }
     var places = []
-    var rawPlaces = Array.isArray(msg.places) ? msg.places : []
+    var rawPlaces = StormzyState.isList(msg.places) ? msg.places : []
     for (var p = 0; p < rawPlaces.length && p < 120; p++) {
       var row = rawPlaces[p]
-      if (!Array.isArray(row) || row.length < 5 || typeof row[0] !== "string") continue
+      if (!StormzyState.isList(row) || row.length < 5 || typeof row[0] !== "string") continue
       var plat = Number(row[1]), plon = Number(row[2])
       if (!isFinite(plat) || !isFinite(plon)) continue
       places.push({ name: row[0].slice(0, 40), u: Geo.lon2u(plon), v: Geo.lat2v(Geo.clampLat(plat)),
